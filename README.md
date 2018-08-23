@@ -1,4 +1,4 @@
-# JSR107 implementation backed by ScaleOut StateServer
+# JSR107 specification implemented using ScaleOut StateServer
 
 ## Introduction
 
