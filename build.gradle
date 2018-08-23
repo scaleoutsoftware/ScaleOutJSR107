@@ -1,0 +1,53 @@
+group 'com.scaleoutsoftware'
+version '1.0-RELEASE'
+
+apply plugin: 'java'
+apply plugin: 'eclipse'
+apply plugin: 'idea'
+
+sourceCompatibility = 1.8
+
+repositories {
+    mavenCentral()
+}
+
+configurations {
+	archives
+}
+ 
+task javadocJar(type: Jar, dependsOn: javadoc) {
+    classifier = 'javadoc'
+    from javadoc.destinationDir
+}
+
+artifacts {
+    archives javadocJar
+}
+
+dependencies {
+    testCompile group: 'junit', name: 'junit', version: '4.11'
+	testCompile group: 'javax.cache', name: 'cache-api', version: '1.1.0'
+	testCompile group: 'org.junit.jupiter', name: 'junit-jupiter-api', version: '5.3.0-M1'
+	// point the following test dependencies to the local SOSS installation folder
+	testCompile files('C:\\path\\to\\ScaleOut_Software\\StateServer\\JavaAPI\\soss-jnc-5.7.jar')
+    testCompile files('C:\\path\\to\\ScaleOut_Software\\StateServer\\JavaAPI\\lib\\concurrentlinkedhashmap-lru-1.4-soss-compat.jar')
+    testCompile files("C:\\path\\to\\ScaleOut_Software\\StateServer\\JavaAPI\\lib\\slf4j-log4j12-1.6.1.jar")
+    testCompile files("C:\\path\\to\\ScaleOut_Software\\StateServer\\JavaAPI\\lib\\slf4j-api-1.6.1.jar")
+    testCompile files("C:\\path\\to\\ScaleOut_Software\\StateServer\\JavaAPI\\lib\\log4j-1.2.16.jar")
+	
+	// point the following test dependencies to the local SOSS installation folder
+    compile files('C:\\path\\to\\ScaleOut_Software\\StateServer\\JavaAPI\\soss-jnc-5.7.jar')
+    compile files('C:\\path\\to\\ScaleOut_Software\\StateServer\\JavaAPI\\lib\\concurrentlinkedhashmap-lru-1.4-soss-compat.jar')
+	compile group: 'javax.cache', name: 'cache-api', version: '1.1.0'
+}
+
+jar {
+	manifest {
+		attributes ('Implementation-Title': project.name,
+                    'Implementation-Version': project.version)
+	}
+}
+
+
+
+
