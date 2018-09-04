@@ -27,6 +27,8 @@ import javax.cache.event.CacheEntryEvent;
 import javax.cache.event.CacheEntryExpiredListener;
 import javax.cache.event.CacheEntryListener;
 import javax.cache.event.EventType;
+import javax.cache.expiry.Duration;
+import javax.cache.expiry.ExpiryPolicy;
 import javax.cache.integration.CompletionListener;
 import javax.cache.processor.EntryProcessor;
 import javax.cache.processor.EntryProcessorException;
@@ -34,10 +36,7 @@ import javax.cache.processor.EntryProcessorResult;
 import javax.cache.processor.MutableEntry;
 import java.io.*;
 import java.util.*;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.*;
 
 /**
  * <p>
@@ -113,7 +112,7 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
 
     private CustomSerializer<K> _keySerializer;
 
-    private NamedCacheObjectExpirationListener _listener;
+    private HashMap<CacheEntryListenerConfiguration, NamedCacheObjectExpirationListener> _listeners = new HashMap<>();
     private boolean _closed = false;
 
     /**
@@ -165,36 +164,57 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
             }
         }
 
-
-        String objectExpirationTimeout = _manager.getProperties().getProperty("object_expiration_timeout_secs");
-        String objectExpirationTimeoutPolicy = _manager.getProperties().getProperty("object_expiration_timeout_policy", "absolute");
-        if(objectExpirationTimeout != null) {
-            int timeout;
-            try {
-                timeout = Integer.parseInt(objectExpirationTimeout);
-            } catch (Exception e) {
-                throw new CacheException("Could not convert timeout: " + objectExpirationTimeout);
+        CreatePolicy cacheCreatePolicy = _cache.getDefaultCreatePolicy();
+        Factory<ExpiryPolicy> expiryPolicyFactory = config.getExpiryPolicyFactory();
+        if(expiryPolicyFactory != null && expiryPolicyFactory.create() != null) {
+            ExpiryPolicy policy = expiryPolicyFactory.create();
+            Duration createDuration = policy.getExpiryForCreation();
+            TimeUnit createTimeUnit = createDuration == null ? null : createDuration.getTimeUnit();
+            if(createTimeUnit != null) {
+                TimeSpan timeSpan = TimeSpan.fromSeconds(createTimeUnit.toSeconds(createDuration.getDurationAmount()));
+                cacheCreatePolicy.setTimeout(timeSpan);
             }
-
-            CreatePolicy policy = _cache.getDefaultCreatePolicy();
-            if(objectExpirationTimeoutPolicy != null) {
-                switch(objectExpirationTimeoutPolicy) {
-                    case "absolute":
-                        policy.setAbsoluteTimeout(true);
-                        break;
-                    case "sliding":
-                        policy.setAbsoluteTimeout(false);
-                        break;
-                    case "absolute_on_read":
-                        policy.setAbsoluteTimeoutOnRead(true);
-                        break;
-                    default:
-                        throw new CacheException("Unknown object expiration timeout policy: " + objectExpirationTimeoutPolicy);
+        } else {
+            String objectExpirationTimeout = _manager.getProperties().getProperty("object_expiration_timeout_secs");
+            String objectExpirationTimeoutPolicy = _manager.getProperties().getProperty("object_expiration_timeout_policy", "absolute");
+            if(objectExpirationTimeout != null) {
+                int timeout;
+                try {
+                    timeout = Integer.parseInt(objectExpirationTimeout);
+                } catch (Exception e) {
+                    throw new CacheException("Could not convert timeout: " + objectExpirationTimeout);
                 }
+
+                if(objectExpirationTimeoutPolicy != null) {
+                    switch(objectExpirationTimeoutPolicy) {
+                        case "absolute":
+                            cacheCreatePolicy.setAbsoluteTimeout(true);
+                            break;
+                        case "sliding":
+                            cacheCreatePolicy.setAbsoluteTimeout(false);
+                            break;
+                        case "absolute_on_read":
+                            cacheCreatePolicy.setAbsoluteTimeoutOnRead(true);
+                            break;
+                        default:
+                            throw new CacheException("Unknown object expiration timeout policy: " + objectExpirationTimeoutPolicy);
+                    }
+                }
+                cacheCreatePolicy.setTimeout(TimeSpan.fromSeconds(timeout));
             }
-            policy.setTimeout(TimeSpan.fromSeconds(timeout));
-            _cache.setDefaultCreatePolicy(policy);
         }
+
+        for(CacheEntryListenerConfiguration<K,V> configuration : config.getCacheEntryListenerConfigurations()) {
+            ScaleoutCacheExpirationListener listener = getCacheEntryExpiredListener(configuration);
+            try {
+                _cache.addListener(listener);
+                _listeners.put(configuration, listener);
+            } catch (NamedCacheException e) {
+                throw new CacheException("Could not register for events.");
+            }
+        }
+
+        _cache.setDefaultCreatePolicy(cacheCreatePolicy);
     }
 
     /**
@@ -1035,13 +1055,15 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
             throw new IllegalStateException("Cache is closed.");
         }
         _closed = true;
-        if(_listener != null) {
-            try {
-                _cache.removeListener(_listener);
-            } catch (NamedCacheException e) {
-
+        if(_listeners != null) {
+            for(NamedCacheObjectExpirationListener listener : _listeners.values()) {
+                try {
+                    _cache.removeListener(listener);
+                } catch (NamedCacheException e) {
+                    throw new CacheException("Could not remove listener.", e);
+                }
             }
-            _listener = null;
+            _listeners = null;
         }
         _manager.removeNamespace(_config.getCacheName());
     }
@@ -1104,22 +1126,12 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
             throw new IllegalStateException("Cache is closed.");
         }
         if(cacheEntryListenerConfiguration == null) throw new NullPointerException("CacheEntryListenerConfiguration was null.");
-        Factory<CacheEntryListener<? super K, ? super V>> factory = cacheEntryListenerConfiguration.getCacheEntryListenerFactory();
-        CacheEntryListener<? super K, ? super V> listener = factory.create();
-        if(listener instanceof CacheEntryExpiredListener) {
-            CacheEntryExpiredListener<K, V> cast = (CacheEntryExpiredListener<K, V>) listener;
-            try {
-                if(_listener == null) {
-                    _listener = new ScaleoutCacheExpirationListener(this, cast);
-                    _cache.addListener(_listener);
-                } else {
-                    throw new IllegalStateException("This cache is already registered for events.");
-                }
-            } catch (NamedCacheException e) {
-                throw new CacheException(e);
-            }
-        } else {
-            throw new UnsupportedOperationException("Listener configuration must be for object expiration. Configured type: " + listener.getClass().getName());
+        ScaleoutCacheExpirationListener listener = getCacheEntryExpiredListener(cacheEntryListenerConfiguration);
+        try {
+            _cache.addListener(listener);
+            _listeners.put(cacheEntryListenerConfiguration, listener);
+        } catch (NamedCacheException e) {
+            throw new CacheException(e);
         }
     }
 
@@ -1145,19 +1157,12 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
             throw new IllegalStateException("Cache is closed.");
         }
         if(cacheEntryListenerConfiguration == null) throw new NullPointerException("CacheEntryListenerConfiguration was null.");
-        Factory<CacheEntryListener<? super K, ? super V>> factory = cacheEntryListenerConfiguration.getCacheEntryListenerFactory();
-        CacheEntryListener<? super K, ? super V> listener = factory.create();
-        if(listener instanceof CacheEntryExpiredListener) {
-            if(_listener != null) {
-                try {
-                    _cache.removeListener(_listener);
-                } catch (NamedCacheException e) {
-                    throw new CacheException(e);
-                }
-                _listener = null;
-            }
-        } else {
-            throw new UnsupportedOperationException("Listener configuration must be for object expiration. Configuration type: " + listener.getClass().getName());
+        ScaleoutCacheExpirationListener listener = getCacheEntryExpiredListener(cacheEntryListenerConfiguration);
+        try {
+            NamedCacheObjectExpirationListener temp = _listeners.remove(cacheEntryListenerConfiguration);
+            _cache.removeListener(temp);
+        } catch (NamedCacheException e) {
+            throw new CacheException(e);
         }
     }
 
@@ -1274,6 +1279,17 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
         ois.close();
         bais.close();
         return _keyType.cast(o);
+    }
+
+    private ScaleoutCacheExpirationListener getCacheEntryExpiredListener(CacheEntryListenerConfiguration<K,V> cacheEntryListenerConfiguration) throws UnsupportedOperationException {
+        Factory<CacheEntryListener<? super K, ? super V>> factory = cacheEntryListenerConfiguration.getCacheEntryListenerFactory();
+        CacheEntryListener<? super K, ? super V> listener = factory.create();
+        if(listener instanceof CacheEntryExpiredListener) {
+            CacheEntryExpiredListener<K,V> expiryListener = (CacheEntryExpiredListener<K,V>) listener;
+            return new ScaleoutCacheExpirationListener(this, expiryListener);
+        } else {
+            throw new UnsupportedOperationException("Listener configuration must be for object expiration. Configuration type: " + listener.getClass().getName());
+        }
     }
 
     /**

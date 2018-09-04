@@ -15,18 +15,26 @@
 */
 package com.scaleoutsoftware.soss.cache;
 
+import javax.cache.configuration.CacheEntryListenerConfiguration;
 import javax.cache.configuration.Configuration;
+import javax.cache.configuration.Factory;
+import javax.cache.configuration.MutableConfiguration;
+import javax.cache.expiry.ExpiryPolicy;
+import java.util.Collection;
+import java.util.Collections;
 
 /**
  * {@link Configuration} implementation used to configure a {@link ScaleoutCache}.
  * @param <K> the type of the key in an entry stored in the {@link ScaleoutCache}
  * @param <V> the type of the value in an entry stored in the {@link ScaleoutCache}
  */
-public class ScaleoutCacheConfiguration<K,V> implements Configuration<K,V> {
+public class ScaleoutCacheConfiguration<K,V> extends MutableConfiguration<K,V> {
 
     private final Class<K> _keyType;
     private final Class<V> _valueType;
     private final String _cacheName;
+    private Iterable<CacheEntryListenerConfiguration<K,V>>_cacheEntryListenerConfigurations = null;
+    private Factory<ExpiryPolicy> _expiryPolicyFactory = null;
 
     /**
      * Instantiates a new configuration for a {@link ScaleoutCache}.
@@ -47,6 +55,31 @@ public class ScaleoutCacheConfiguration<K,V> implements Configuration<K,V> {
      */
     ScaleoutCacheConfiguration(String cacheName, Configuration<K,V> configuration) {
         this(cacheName, configuration.getKeyType(), configuration.getValueType());
+    }
+
+    /**
+     * Instantiates a new configuration class based on an existing Configuration.
+     * @param cacheName the ScaleoutCache name
+     * @param configuration the configuration the ScaleoutCacheConfiguration will use
+     */
+    ScaleoutCacheConfiguration(String cacheName, MutableConfiguration<K,V> configuration) {
+        this(cacheName, configuration.getKeyType(), configuration.getValueType());
+        _cacheEntryListenerConfigurations = configuration.getCacheEntryListenerConfigurations();
+        _expiryPolicyFactory = configuration.getExpiryPolicyFactory();
+    }
+
+    @Override
+    public Factory<ExpiryPolicy> getExpiryPolicyFactory() {
+        return _expiryPolicyFactory;
+    }
+
+    @Override
+    public Iterable<CacheEntryListenerConfiguration<K,V>> getCacheEntryListenerConfigurations() {
+        if(_cacheEntryListenerConfigurations == null) {
+            return Collections.emptyList();
+        } else {
+            return _cacheEntryListenerConfigurations;
+        }
     }
 
     /**

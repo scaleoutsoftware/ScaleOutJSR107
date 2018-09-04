@@ -19,6 +19,7 @@ import javax.cache.Cache;
 import javax.cache.CacheException;
 import javax.cache.CacheManager;
 import javax.cache.configuration.Configuration;
+import javax.cache.configuration.MutableConfiguration;
 import javax.cache.spi.CachingProvider;
 import java.net.URI;
 import java.util.*;
@@ -108,19 +109,26 @@ public class ScaleoutCacheManager implements CacheManager {
     /**
      * Creates and returns a new {@link ScaleoutCache}.
      * @param name the name to use for the {@link ScaleoutCache}
-     * @param config the config to use for the {@link ScaleoutCache}
+     * @param configuration the config to use for the {@link ScaleoutCache}
      * @param <K> the key type to use
      * @param <V> the value type to use
      * @param <C> the configuration type to use
      * @return a new {@link ScaleoutCache}
      * @throws IllegalStateException if the {@link ScaleoutCacheManager} is closed
      */
+    @SuppressWarnings("unchecked")
     @Override
-    public <K, V, C extends Configuration<K, V>> Cache<K, V> createCache(String name, C config) throws IllegalStateException {
+    public <K, V, C extends Configuration<K, V>> Cache<K, V> createCache(String name, C configuration) throws IllegalStateException {
         if(_closed) {
             throw new IllegalStateException("CacheManager is closed.");
         }
-        Cache<K,V> ret = new ScaleoutCache<K, V>(new ScaleoutCacheConfiguration<K,V>(name, config), this);
+        ScaleoutCacheConfiguration<K,V> config = null;
+        if(configuration instanceof MutableConfiguration) {
+            config = new ScaleoutCacheConfiguration<>(name, (MutableConfiguration<K,V>)configuration);
+        } else {
+            config = new ScaleoutCacheConfiguration<>(name, configuration);
+        }
+        Cache<K,V> ret = new ScaleoutCache<K, V>(config, this);
         _createdCaches.put(name, ret);
         _namespaces.add(name);
         return ret;
@@ -135,16 +143,30 @@ public class ScaleoutCacheManager implements CacheManager {
      * @param <V> the value type
      * @return a {@link ScaleoutCache}
      * @throws IllegalStateException if the {@link ScaleoutCacheManager} is closed
+     * @throws IllegalArgumentException if the specified key/value classes do not match the configured type
      */
     @Override
-    public <K, V> Cache<K, V> getCache(String s, Class<K> keyClass, Class<V> valueClass) throws IllegalStateException {
+    @SuppressWarnings("unchecked")
+    public <K, V> Cache<K, V> getCache(String s, Class<K> keyClass, Class<V> valueClass) throws IllegalStateException, IllegalArgumentException{
         if(_closed) {
             throw new IllegalStateException("CacheManager is closed.");
         }
-        Cache<K,V> ret = new ScaleoutCache<K, V>(new ScaleoutCacheConfiguration<K,V>(s, keyClass,valueClass), this);
-        _namespaces.add(s);
-        _createdCaches.put(s, ret);
-        return ret;
+
+        Cache<K,V> cache = null;
+        Cache<?,?> exists = _createdCaches.get(s);
+        if(exists == null) {
+            cache = new ScaleoutCache<K, V>(new ScaleoutCacheConfiguration<K,V>(s, keyClass,valueClass), this);
+            _namespaces.add(s);
+            _createdCaches.put(s, cache);
+        } else {
+            ScaleoutCacheConfiguration config = exists.getConfiguration(ScaleoutCacheConfiguration.class);
+            if(config.getKeyType() == keyClass && config.getValueType() == valueClass) {
+                cache = (Cache<K,V>)exists;
+            } else {
+                throw new IllegalArgumentException("Key and value types do not match the configured type of this cache.");
+            }
+        }
+        return cache;
     }
 
     /**
@@ -156,6 +178,7 @@ public class ScaleoutCacheManager implements CacheManager {
      * @throws IllegalStateException if the {@link ScaleoutCacheManager} is closed
      */
     @Override
+    @SuppressWarnings("unchecked")
     public <K, V> Cache<K, V> getCache(String s) throws IllegalStateException {
         if(_closed) {
             throw new IllegalStateException("CacheManager is closed.");
@@ -164,10 +187,21 @@ public class ScaleoutCacheManager implements CacheManager {
         Class<?> keyClass = key.getClass();
         V value = (V)new Object();
         Class<?> valueClass = value.getClass();
-        Cache<K,V> ret = new ScaleoutCache<K, V>(new ScaleoutCacheConfiguration<K,V>(s, (Class<K>)keyClass,(Class<V>)valueClass), this);
-        _namespaces.add(s);
-        _createdCaches.put(s, ret);
-        return ret;
+        Cache<K,V> cache = null;
+        Cache<?,?> exists = _createdCaches.get(s);
+        if(exists == null) {
+            cache = new ScaleoutCache<K, V>(new ScaleoutCacheConfiguration<K,V>(s, (Class<K>)keyClass,(Class<V>)valueClass), this);
+            _namespaces.add(s);
+            _createdCaches.put(s, cache);
+        } else {
+            ScaleoutCacheConfiguration config = exists.getConfiguration(ScaleoutCacheConfiguration.class);
+            if(config.getKeyType() == keyClass && config.getValueType() == valueClass) {
+                cache = (Cache<K,V>)exists;
+            } else {
+                throw new IllegalArgumentException("Key and value types do not match the configured type of this cache.");
+            }
+        }
+        return cache;
     }
 
     /**
