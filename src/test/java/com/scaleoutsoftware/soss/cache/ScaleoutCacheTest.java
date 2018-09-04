@@ -25,7 +25,10 @@ import javax.cache.CacheManager;
 import javax.cache.configuration.CacheEntryListenerConfiguration;
 import javax.cache.configuration.Factory;
 import javax.cache.configuration.MutableCacheEntryListenerConfiguration;
+import javax.cache.configuration.MutableConfiguration;
 import javax.cache.event.*;
+import javax.cache.expiry.CreatedExpiryPolicy;
+import javax.cache.expiry.Duration;
 import javax.cache.processor.EntryProcessor;
 import javax.cache.processor.EntryProcessorException;
 import javax.cache.processor.EntryProcessorResult;
@@ -33,6 +36,7 @@ import javax.cache.processor.MutableEntry;
 import javax.cache.spi.CachingProvider;
 
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -45,7 +49,19 @@ class ScaleoutCacheTest {
     {
         CachingProvider provider = new ScaleoutCachingProvider();
         CacheManager manager = provider.getCacheManager();
-        _cache = manager.getCache(_name, String.class, String.class);
+
+        _cache = manager.createCache(_name, new MutableConfiguration<String, String>().setTypes(String.class, String.class));
+    }
+
+    @org.junit.jupiter.api.Test
+    void testCreateCacheAndGetCache() {
+        CachingProvider provider = new ScaleoutCachingProvider();
+        CacheManager manager = provider.getCacheManager();
+
+        Cache<String, String> cache = manager.createCache(_name, new MutableConfiguration<String, String>().setTypes(String.class, String.class));
+
+        Cache<String, String> cachetwo = manager.getCache(_name, String.class, String.class);
+        assertEquals(cache,cachetwo);
     }
 
     @org.junit.jupiter.api.Test
@@ -231,49 +247,45 @@ class ScaleoutCacheTest {
         props.setProperty("object_expiration_timeout_secs", "1");
         props.setProperty("object_expiration_timeout_policy", "absolute");
         CacheManager manager = provider.getCacheManager(provider.getDefaultURI(), provider.getDefaultClassLoader(), props);
-        _cache = manager.getCache(_name, String.class, String.class);
-        _cache.put("foo", "bar");
+        Cache<String, String> cache = manager.getCache(_name, String.class, String.class);
+        cache.put("foo", "bar");
         String isnullstring = null;
-        CacheEntryListenerConfiguration<String, String> config = new CacheEntryListenerConfiguration<String, String>() {
-            @Override
-            public Factory<CacheEntryListener<? super String, ? super String>> getCacheEntryListenerFactory() {
-                return new Factory<CacheEntryListener<? super String, ? super String>>() {
-                    @Override
-                    public CacheEntryListener<? super String, ? super String> create() {
-                        return new CacheEntryExpiredListener<String, String>() {
-                            @Override
-                            public void onExpired(Iterable<CacheEntryEvent<? extends String, ? extends String>> iterable) throws CacheEntryListenerException {
-                                for(CacheEntryEvent<? extends String, ? extends String> kvp : iterable) {
-                                    System.out.println("key: " + kvp.getKey() + " value: " + kvp.getValue());
-                                }
-                            }
-                        };
-                    }
-                };
-            }
 
-            @Override
-            public boolean isOldValueRequired() {
-                return false;
-            }
-
-            @Override
-            public Factory<CacheEntryEventFilter<? super String, ? super String>> getCacheEntryEventFilterFactory() {
-                return null;
-            }
-
-            @Override
-            public boolean isSynchronous() {
-                return false;
-            }
-        };
-        _cache.registerCacheEntryListener(config);
+        cache.registerCacheEntryListener(getCacheEntryListenerConfiguration());
 
         try {
             Thread.sleep(3000);
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
+    }
+
+    @org.junit.jupiter.api.Test
+    void  testExpiredThroughConfig() {
+        CachingProvider provider = new ScaleoutCachingProvider();
+        CacheManager manager = provider.getCacheManager();
+        Cache<String,String> cache = manager.createCache(_name, new MutableConfiguration<String,String>()
+            .setExpiryPolicyFactory(CreatedExpiryPolicy.factoryOf(new Duration(TimeUnit.SECONDS, 1)))
+            .addCacheEntryListenerConfiguration(getCacheEntryListenerConfiguration()));
+        cache.put("foo", "bar");
+
+        try {
+            Thread.sleep(3000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+
+    @org.junit.jupiter.api.Test
+    void  testRemoveCacheEntryListenerConfiguration() {
+        CachingProvider provider = new ScaleoutCachingProvider();
+        CacheManager manager = provider.getCacheManager();
+        CacheEntryListenerConfiguration<String, String> configuration = getCacheEntryListenerConfiguration();
+        _cache = manager.createCache(_name, new MutableConfiguration<String,String>()
+                .setExpiryPolicyFactory(CreatedExpiryPolicy.factoryOf(new Duration(TimeUnit.SECONDS, 1)))
+                .addCacheEntryListenerConfiguration(configuration));
+        _cache.put("foo", "bar");
+        _cache.deregisterCacheEntryListener(configuration);
     }
 
     @org.junit.jupiter.api.Test
@@ -349,5 +361,41 @@ class ScaleoutCacheTest {
         for(Map.Entry<String, EntryProcessorResult<String>> entry : ret.entrySet()) {
             assertEquals(0, entry.getValue().get().compareTo("foo"));
         }
+    }
+
+    private CacheEntryListenerConfiguration<String, String> getCacheEntryListenerConfiguration() {
+        return new CacheEntryListenerConfiguration<String, String>() {
+            @Override
+            public Factory<CacheEntryListener<? super String, ? super String>> getCacheEntryListenerFactory() {
+                return new Factory<CacheEntryListener<? super String, ? super String>>() {
+                    @Override
+                    public CacheEntryListener<? super String, ? super String> create() {
+                        return new CacheEntryExpiredListener<String, String>() {
+                            @Override
+                            public void onExpired(Iterable<CacheEntryEvent<? extends String, ? extends String>> iterable) throws CacheEntryListenerException {
+                                for(CacheEntryEvent<? extends String, ? extends String> kvp : iterable) {
+                                    System.out.println("key: " + kvp.getKey() + " value: " + kvp.getValue());
+                                }
+                            }
+                        };
+                    }
+                };
+            }
+
+            @Override
+            public boolean isOldValueRequired() {
+                return false;
+            }
+
+            @Override
+            public Factory<CacheEntryEventFilter<? super String, ? super String>> getCacheEntryEventFilterFactory() {
+                return null;
+            }
+
+            @Override
+            public boolean isSynchronous() {
+                return false;
+            }
+        };
     }
 }
