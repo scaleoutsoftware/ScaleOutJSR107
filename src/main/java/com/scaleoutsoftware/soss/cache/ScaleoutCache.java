@@ -124,17 +124,20 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
      * @param manager the manager responsible for this cache
      */
     ScaleoutCache(ScaleoutCacheConfiguration<K,V> config, ScaleoutCacheManager manager) {
+        // handle key/value types
         _config = config;
         _manager = manager;
         _keyType = _config.getKeyType();
         _valueType = _config.getValueType();
 
+        // retrieve NamedCache
         try {
             _cache = CacheFactory.getCache(config.getCacheName());
         } catch (NamedCacheException e) {
             throw new IllegalArgumentException("Could not create cache.");
         }
 
+        // handle key/value serializers
         String valueClassName = _manager.getProperties().getProperty("cache_value_serializer");
         if(valueClassName != null) {
             try {
@@ -164,43 +167,88 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
             }
         }
 
+        // handle create/access/update timeouts through properties
         CreatePolicy cacheCreatePolicy = _cache.getDefaultCreatePolicy();
+
+        String objectExpirationTimeout = _manager.getProperties().getProperty("object_expiration_timeout_secs");
+        String objectExpirationTimeoutPolicy = _manager.getProperties().getProperty("object_expiration_timeout_policy", "absolute");
+        if(objectExpirationTimeout != null) {
+            int timeout;
+            try {
+                timeout = Integer.parseInt(objectExpirationTimeout);
+            } catch (Exception e) {
+                throw new CacheException("Could not convert timeout: " + objectExpirationTimeout);
+            }
+
+            if(objectExpirationTimeoutPolicy != null) {
+                switch(objectExpirationTimeoutPolicy) {
+                    case "absolute":
+                        cacheCreatePolicy.setAbsoluteTimeout(true);
+                        break;
+                    case "sliding":
+                        cacheCreatePolicy.setAbsoluteTimeout(false);
+                        break;
+                    case "absolute_on_read":
+                        cacheCreatePolicy.setAbsoluteTimeoutOnRead(true);
+                        break;
+                    default:
+                        throw new CacheException("Unknown object expiration timeout policy: " + objectExpirationTimeoutPolicy);
+                }
+            }
+            cacheCreatePolicy.setTimeout(TimeSpan.fromSeconds(timeout));
+        }
+
+        // handle create/access/update timeouts through config
         Factory<ExpiryPolicy> expiryPolicyFactory = config.getExpiryPolicyFactory();
         if(expiryPolicyFactory != null && expiryPolicyFactory.create() != null) {
             ExpiryPolicy policy = expiryPolicyFactory.create();
-            Duration createDuration = policy.getExpiryForCreation();
-            TimeUnit createTimeUnit = createDuration == null ? null : createDuration.getTimeUnit();
-            if(createTimeUnit != null) {
-                TimeSpan timeSpan = TimeSpan.fromSeconds(createTimeUnit.toSeconds(createDuration.getDurationAmount()));
-                cacheCreatePolicy.setTimeout(timeSpan);
-            }
-        } else {
-            String objectExpirationTimeout = _manager.getProperties().getProperty("object_expiration_timeout_secs");
-            String objectExpirationTimeoutPolicy = _manager.getProperties().getProperty("object_expiration_timeout_policy", "absolute");
-            if(objectExpirationTimeout != null) {
-                int timeout;
-                try {
-                    timeout = Integer.parseInt(objectExpirationTimeout);
-                } catch (Exception e) {
-                    throw new CacheException("Could not convert timeout: " + objectExpirationTimeout);
-                }
 
-                if(objectExpirationTimeoutPolicy != null) {
-                    switch(objectExpirationTimeoutPolicy) {
-                        case "absolute":
-                            cacheCreatePolicy.setAbsoluteTimeout(true);
-                            break;
-                        case "sliding":
-                            cacheCreatePolicy.setAbsoluteTimeout(false);
-                            break;
-                        case "absolute_on_read":
-                            cacheCreatePolicy.setAbsoluteTimeoutOnRead(true);
-                            break;
-                        default:
-                            throw new CacheException("Unknown object expiration timeout policy: " + objectExpirationTimeoutPolicy);
-                    }
-                }
-                cacheCreatePolicy.setTimeout(TimeSpan.fromSeconds(timeout));
+            Duration createDuration = policy.getExpiryForCreation();
+            Duration updateDuration = policy.getExpiryForUpdate();
+            Duration accessDuration = policy.getExpiryForAccess();
+
+            TimeUnit createTimeUnit = createDuration == null ? null : createDuration.getTimeUnit();
+            TimeUnit updateTimeUnit = updateDuration == null ? null : updateDuration.getTimeUnit();
+            TimeUnit accessTimeUnit = accessDuration == null ? null : accessDuration.getTimeUnit();
+
+            TimeSpan createTimeSpan = null;
+            TimeSpan updateTimeSpan = null;
+            TimeSpan accessTimeSpan = null;
+
+            TimeSpan timeSpan = null;
+            if(createTimeUnit != null) {
+                createTimeSpan = TimeSpan.fromSeconds(createTimeUnit.toSeconds(createDuration.getDurationAmount()));
+            }
+
+            if(updateTimeUnit != null) {
+                updateTimeSpan = TimeSpan.fromSeconds(updateTimeUnit.toSeconds(updateDuration.getDurationAmount()));
+            }
+
+            if(accessTimeUnit != null) {
+                accessTimeSpan = TimeSpan.fromSeconds(accessTimeUnit.toSeconds(accessDuration.getDurationAmount()));
+            }
+
+            // use createTimespan
+            if (createTimeSpan != null) {
+                timeSpan = createTimeSpan;
+                cacheCreatePolicy.setAbsoluteTimeout(true);
+            }
+
+            // use absolute on read (i.e. timeout is reset when object is updated)
+            if(timeSpan == null || updateTimeSpan != null) {
+                timeSpan = timeSpan != null ? updateTimeSpan.getSeconds() > timeSpan.getSeconds() ? updateTimeSpan : timeSpan : updateTimeSpan;
+                cacheCreatePolicy.setAbsoluteTimeoutOnRead(true);
+            }
+
+            // use accessTimespan (i.e. timeout is always reset with any object access)
+            if(timeSpan == null || accessTimeSpan != null) {
+                timeSpan = timeSpan != null ? accessTimeSpan.getSeconds() > timeSpan.getSeconds() ? accessTimeSpan : timeSpan : accessTimeSpan;
+                cacheCreatePolicy.setAbsoluteTimeout(false);
+                cacheCreatePolicy.setAbsoluteTimeoutOnRead(false);
+            }
+
+            if(timeSpan != null) {
+                cacheCreatePolicy.setTimeout(timeSpan);
             }
         }
 
