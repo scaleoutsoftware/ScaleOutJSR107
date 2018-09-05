@@ -35,7 +35,7 @@ public class ScaleoutCachingProvider implements CachingProvider {
     /**
      * Instantiates a ScaleoutCachingProvider.
      */
-    ScaleoutCachingProvider() {
+    public ScaleoutCachingProvider() {
         _defaultClassLoader = ClassLoader.getSystemClassLoader();
         try {
             _defaultUri = new URI("soss/cache/api");
