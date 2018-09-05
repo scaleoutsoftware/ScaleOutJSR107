@@ -27,8 +27,10 @@ import javax.cache.configuration.Factory;
 import javax.cache.configuration.MutableCacheEntryListenerConfiguration;
 import javax.cache.configuration.MutableConfiguration;
 import javax.cache.event.*;
+import javax.cache.expiry.AccessedExpiryPolicy;
 import javax.cache.expiry.CreatedExpiryPolicy;
 import javax.cache.expiry.Duration;
+import javax.cache.expiry.TouchedExpiryPolicy;
 import javax.cache.processor.EntryProcessor;
 import javax.cache.processor.EntryProcessorException;
 import javax.cache.processor.EntryProcessorResult;
@@ -242,17 +244,21 @@ class ScaleoutCacheTest {
 
     @org.junit.jupiter.api.Test
     void  testExpired() {
+        long timeout = 1;
         CachingProvider provider = new ScaleoutCachingProvider();
         Properties props = provider.getDefaultProperties();
-        props.setProperty("object_expiration_timeout_secs", "1");
+
+        props.setProperty("object_expiration_timeout_secs", Long.toString(timeout));
         props.setProperty("object_expiration_timeout_policy", "absolute");
         CacheManager manager = provider.getCacheManager(provider.getDefaultURI(), provider.getDefaultClassLoader(), props);
         Cache<String, String> cache = manager.getCache(_name, String.class, String.class);
+
+        long currentTimeMillis = System.currentTimeMillis() + (1000 * timeout);
+        int roundToNearestSecond = (int)((currentTimeMillis + 500) / 1000);
+
+        cache.registerCacheEntryListener(getCacheEntryListenerConfiguration(roundToNearestSecond));
+
         cache.put("foo", "bar");
-        String isnullstring = null;
-
-        cache.registerCacheEntryListener(getCacheEntryListenerConfiguration());
-
         try {
             Thread.sleep(3000);
         } catch (InterruptedException e) {
@@ -262,11 +268,14 @@ class ScaleoutCacheTest {
 
     @org.junit.jupiter.api.Test
     void  testExpiredThroughConfig() {
+        long timeout = 1;
+        long currentTimeMillis = System.currentTimeMillis() + (1000 * timeout);
+        int roundToNearestSecond = (int)((currentTimeMillis + 500) / 1000);
         CachingProvider provider = new ScaleoutCachingProvider();
         CacheManager manager = provider.getCacheManager();
         Cache<String,String> cache = manager.createCache(_name, new MutableConfiguration<String,String>()
             .setExpiryPolicyFactory(CreatedExpiryPolicy.factoryOf(new Duration(TimeUnit.SECONDS, 1)))
-            .addCacheEntryListenerConfiguration(getCacheEntryListenerConfiguration()));
+            .addCacheEntryListenerConfiguration(getCacheEntryListenerConfiguration(roundToNearestSecond)));
         cache.put("foo", "bar");
 
         try {
@@ -277,10 +286,38 @@ class ScaleoutCacheTest {
     }
 
     @org.junit.jupiter.api.Test
+    void  testCorrectExpiredPolicyThroughConfig() {
+        long timeout = 1;
+        // round to nearest second * 2 because we will touch the object
+        long currentTimeMillis = System.currentTimeMillis() + ((1000 * timeout) * 2);
+        int roundToNearestSecond = (int)((currentTimeMillis + 500) / 1000);
+        CachingProvider provider = new ScaleoutCachingProvider();
+        CacheManager manager = provider.getCacheManager();
+        Cache<String,String> cache = manager.createCache(_name, new MutableConfiguration<String,String>()
+                .setExpiryPolicyFactory(TouchedExpiryPolicy.factoryOf(new Duration(TimeUnit.SECONDS, 1)))
+                .addCacheEntryListenerConfiguration(getCacheEntryListenerConfiguration(roundToNearestSecond)));
+        cache.put("foo", "bar");
+        try {
+            Thread.sleep(750);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+            fail();
+        }
+        cache.get("foo");
+
+        try {
+            Thread.sleep(3000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+            fail();
+        }
+    }
+
+    @org.junit.jupiter.api.Test
     void  testRemoveCacheEntryListenerConfiguration() {
         CachingProvider provider = new ScaleoutCachingProvider();
         CacheManager manager = provider.getCacheManager();
-        CacheEntryListenerConfiguration<String, String> configuration = getCacheEntryListenerConfiguration();
+        CacheEntryListenerConfiguration<String, String> configuration = getCacheEntryListenerConfiguration(1);
         _cache = manager.createCache(_name, new MutableConfiguration<String,String>()
                 .setExpiryPolicyFactory(CreatedExpiryPolicy.factoryOf(new Duration(TimeUnit.SECONDS, 1)))
                 .addCacheEntryListenerConfiguration(configuration));
@@ -363,7 +400,7 @@ class ScaleoutCacheTest {
         }
     }
 
-    private CacheEntryListenerConfiguration<String, String> getCacheEntryListenerConfiguration() {
+    private CacheEntryListenerConfiguration<String, String> getCacheEntryListenerConfiguration(final long expected) {
         return new CacheEntryListenerConfiguration<String, String>() {
             @Override
             public Factory<CacheEntryListener<? super String, ? super String>> getCacheEntryListenerFactory() {
@@ -373,8 +410,11 @@ class ScaleoutCacheTest {
                         return new CacheEntryExpiredListener<String, String>() {
                             @Override
                             public void onExpired(Iterable<CacheEntryEvent<? extends String, ? extends String>> iterable) throws CacheEntryListenerException {
+                                long currentTimeMillis = System.currentTimeMillis();
+                                int roundToNearestSecond = (int)((currentTimeMillis + 500) / 1000);
+                                System.out.println("Actual: " + roundToNearestSecond + " expected: " + expected);
                                 for(CacheEntryEvent<? extends String, ? extends String> kvp : iterable) {
-                                    System.out.println("key: " + kvp.getKey() + " value: " + kvp.getValue());
+                                    assertEquals(roundToNearestSecond, expected);
                                 }
                             }
                         };
