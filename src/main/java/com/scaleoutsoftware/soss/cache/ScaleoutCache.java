@@ -35,6 +35,7 @@ import javax.cache.processor.EntryProcessorException;
 import javax.cache.processor.EntryProcessorResult;
 import javax.cache.processor.MutableEntry;
 import java.io.*;
+import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.*;
 
@@ -1280,8 +1281,10 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
      * @throws ObjectNotSupportedException
      */
     private CachedObjectId<V> createCachedObjectId(K key) throws IOException, NamedCacheException, ObjectNotSupportedException {
+        String sKey = null;
         byte[] bytes = serializeKey(key);
-        return _cache.createKey(bytes);
+        sKey = Base64.getEncoder().encodeToString(bytes);
+        return _cache.createKey(sKey);
     }
 
     /**
@@ -1362,7 +1365,13 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
 
         public Entry<K,V> next() {
             CachedObjectId<V> id = _ids.next();
-            byte[] serializedKey = id.getKey().toByteArray();
+            byte[] serializedKey = new byte[0];
+            try {
+                String sKey = id.getKeyString();
+                serializedKey = Base64.getDecoder().decode(sKey);
+            } catch (Exception e) {
+                throw new CacheException(e);
+            }
             K key = null;
             V val = null;
             try {
@@ -1447,7 +1456,13 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
             CachedObjectId id = args.getCachedObjectId();
             K key;
             V value;
-            byte[] serializedKey = id.getKey().toByteArray();
+            byte[] serializedKey = new byte[0];
+            try {
+                String sKey = id.getKeyString();
+                serializedKey = Base64.getDecoder().decode(sKey);
+            } catch (Exception e) {
+                throw new CacheException(e);
+            }
             try {
                 key = deserializeKey(serializedKey);
             } catch (IOException | ClassNotFoundException | ObjectNotSupportedException e) {
