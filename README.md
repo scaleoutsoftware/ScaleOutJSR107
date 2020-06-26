@@ -24,7 +24,7 @@ repositories {
 ...and then you can add the ScaleOut JSR107 API as a dependency:
 
 ```
-compile group: 'com.scaleoutsoftware', name: "jsr107", version: '1.1'
+compile group: 'com.scaleoutsoftware', name: "jsr107", version: '1.2'
 ```
 
 ### Maven
@@ -45,7 +45,7 @@ For Maven, you can add the ScaleOut API Repository to your pom.xml by adding the
 	<dependency>
 	  <groupId>com.scaleoutsoftware</groupId>
 	  <artifactId>jsr107</artifactId>
-	  <version>1.1</version>
+	  <version>1.2</version>
 	</dependency>
 </dependencies>
 ``` 
