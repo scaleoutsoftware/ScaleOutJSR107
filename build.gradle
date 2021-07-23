@@ -1,5 +1,5 @@
 group 'com.scaleoutsoftware'
-version '1.0-RELEASE'
+version '1.2-RELEASE'
 
 apply plugin: 'java'
 apply plugin: 'eclipse'
