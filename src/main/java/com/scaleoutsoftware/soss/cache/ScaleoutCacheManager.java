@@ -16,10 +16,9 @@
 package com.scaleoutsoftware.soss.cache;
 
 import javax.cache.Cache;
-import javax.cache.CacheException;
 import javax.cache.CacheManager;
+import javax.cache.configuration.CompleteConfiguration;
 import javax.cache.configuration.Configuration;
-import javax.cache.configuration.MutableConfiguration;
 import javax.cache.spi.CachingProvider;
 import java.net.URI;
 import java.util.*;
@@ -123,8 +122,8 @@ public class ScaleoutCacheManager implements CacheManager {
             throw new IllegalStateException("CacheManager is closed.");
         }
         ScaleoutCacheConfiguration<K,V> config = null;
-        if(configuration instanceof MutableConfiguration) {
-            config = new ScaleoutCacheConfiguration<>(name, (MutableConfiguration<K,V>)configuration);
+        if(configuration instanceof CompleteConfiguration) {
+            config = new ScaleoutCacheConfiguration<>(name, (CompleteConfiguration<K,V>)configuration);
         } else {
             config = new ScaleoutCacheConfiguration<>(name, configuration);
         }

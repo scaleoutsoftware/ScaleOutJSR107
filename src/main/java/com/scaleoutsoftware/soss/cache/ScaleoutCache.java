@@ -21,6 +21,7 @@ import javax.cache.Cache;
 import javax.cache.CacheException;
 import javax.cache.CacheManager;
 import javax.cache.configuration.CacheEntryListenerConfiguration;
+import javax.cache.configuration.CompleteConfiguration;
 import javax.cache.configuration.Configuration;
 import javax.cache.configuration.Factory;
 import javax.cache.event.CacheEntryEvent;
@@ -29,15 +30,17 @@ import javax.cache.event.CacheEntryListener;
 import javax.cache.event.EventType;
 import javax.cache.expiry.Duration;
 import javax.cache.expiry.ExpiryPolicy;
+import javax.cache.integration.CacheLoader;
+import javax.cache.integration.CacheWriter;
 import javax.cache.integration.CompletionListener;
 import javax.cache.processor.EntryProcessor;
 import javax.cache.processor.EntryProcessorException;
 import javax.cache.processor.EntryProcessorResult;
 import javax.cache.processor.MutableEntry;
 import java.io.*;
-import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.logging.Logger;
 
 /**
  * <p>
@@ -102,19 +105,20 @@ import java.util.concurrent.*;
 public class ScaleoutCache<K,V> implements Cache<K, V> {
 
     // this should be put in a isolated parallel class, i.e. Parallel.getAll(set< ? extends K>);
-    private ExecutorService _service = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+    private final ExecutorService   _service    = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+    private final Logger            _logger     = Logger.getLogger(ScaleoutCache.class.getName());
+    private final HashMap<CacheEntryListenerConfiguration, NamedCacheObjectExpirationListener>
+                                    _listeners  = new HashMap<>();
+    private boolean                 _closed     = false;
 
-    private final NamedCache _cache;
-    private final ScaleoutCacheConfiguration<K,V> _config;
-    private final ScaleoutCacheManager _manager;
+    private final NamedCache                        _cache;
+    private final ScaleoutCacheConfiguration<K,V>   _config;
+    private final ScaleoutCacheManager              _manager;
+    private final Class<K>                          _keyType;
+    private final Class<V>                          _valueType;
+    private CustomSerializer<K>                     _keySerializer;
 
-    private final Class<K> _keyType;
-    private final Class<V> _valueType;
 
-    private CustomSerializer<K> _keySerializer;
-
-    private HashMap<CacheEntryListenerConfiguration, NamedCacheObjectExpirationListener> _listeners = new HashMap<>();
-    private boolean _closed = false;
 
     /**
      * <p>
@@ -125,11 +129,14 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
      * @param manager the manager responsible for this cache
      */
     ScaleoutCache(ScaleoutCacheConfiguration<K,V> config, ScaleoutCacheManager manager) {
+        _logger.info("Initializing ScaleOut Cache version 1.2.");
+        _logger.info("Configuration supplied.");
+        _logger.info(config.toString());
         // handle key/value types
-        _config = config;
-        _manager = manager;
-        _keyType = _config.getKeyType();
-        _valueType = _config.getValueType();
+        _config     = config;
+        _manager    = manager;
+        _keyType    = _config.getKeyType();
+        _valueType  = _config.getValueType();
 
         // retrieve NamedCache
         try {
@@ -169,10 +176,11 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
         }
 
         // handle create/access/update timeouts through properties
-        CreatePolicy cacheCreatePolicy = _cache.getDefaultCreatePolicy();
+        String timeoutType              = "none";
+        CreatePolicy cacheCreatePolicy  = _cache.getDefaultCreatePolicy();
 
-        String objectExpirationTimeout = _manager.getProperties().getProperty("object_expiration_timeout_secs");
-        String objectExpirationTimeoutPolicy = _manager.getProperties().getProperty("object_expiration_timeout_policy", "absolute");
+        String objectExpirationTimeout          = _manager.getProperties().getProperty("object_expiration_timeout_secs");
+        String objectExpirationTimeoutPolicy    = _manager.getProperties().getProperty("object_expiration_timeout_policy", "absolute");
         if(objectExpirationTimeout != null) {
             int timeout;
             try {
@@ -182,6 +190,7 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
             }
 
             if(objectExpirationTimeoutPolicy != null) {
+                timeoutType = objectExpirationTimeoutPolicy;
                 switch(objectExpirationTimeoutPolicy) {
                     case "absolute":
                         cacheCreatePolicy.setAbsoluteTimeout(true);
@@ -202,7 +211,7 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
         // handle create/access/update timeouts through config
         Factory<ExpiryPolicy> expiryPolicyFactory = config.getExpiryPolicyFactory();
         if(expiryPolicyFactory != null && expiryPolicyFactory.create() != null) {
-            ExpiryPolicy policy = expiryPolicyFactory.create();
+            ExpiryPolicy policy     = expiryPolicyFactory.create();
 
             Duration createDuration = policy.getExpiryForCreation();
             Duration updateDuration = policy.getExpiryForUpdate();
@@ -233,12 +242,14 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
             if (createTimeSpan != null) {
                 timeSpan = createTimeSpan;
                 cacheCreatePolicy.setAbsoluteTimeout(true);
+                timeoutType = "absolute";
             }
 
             // use absolute on read (i.e. timeout is reset when object is updated)
             if(timeSpan == null || updateTimeSpan != null) {
                 timeSpan = timeSpan != null ? updateTimeSpan.getSeconds() > timeSpan.getSeconds() ? updateTimeSpan : timeSpan : updateTimeSpan;
                 cacheCreatePolicy.setAbsoluteTimeoutOnRead(true);
+                timeoutType = "absolute_on_read";
             }
 
             // use accessTimespan (i.e. timeout is always reset with any object access)
@@ -246,6 +257,7 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
                 timeSpan = timeSpan != null ? accessTimeSpan.getSeconds() > timeSpan.getSeconds() ? accessTimeSpan : timeSpan : accessTimeSpan;
                 cacheCreatePolicy.setAbsoluteTimeout(false);
                 cacheCreatePolicy.setAbsoluteTimeoutOnRead(false);
+                timeoutType = "sliding";
             }
 
             if(timeSpan != null) {
@@ -253,17 +265,51 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
             }
         }
 
+        _cache.setDefaultCreatePolicy(cacheCreatePolicy);
+
+        _logger.info("Added default create policy.");
+        _logger.info(String.format("TimeoutType: %s - Timeout: %s", timeoutType, cacheCreatePolicy.getTimeout().getSeconds()));
+
+        // add expiration listeners
         for(CacheEntryListenerConfiguration<K,V> configuration : config.getCacheEntryListenerConfigurations()) {
             ScaleoutCacheExpirationListener listener = getCacheEntryExpiredListener(configuration);
             try {
                 _cache.addListener(listener);
                 _listeners.put(configuration, listener);
+                _logger.info("Adding CacheEntryListener.");
+                _logger.info(configuration.toString());
             } catch (NamedCacheException e) {
                 throw new CacheException("Could not register for events.");
             }
         }
 
-        _cache.setDefaultCreatePolicy(cacheCreatePolicy);
+        // add backing store
+        if(config.isReadThrough() || config.isWriteThrough()) {
+            _logger.info("Adding ScaleOut backing store.");
+            _logger.info(String.format("isReadThrough: %s isWriteThrough: %s", config.isReadThrough(), config.isWriteThrough()));
+            Factory<CacheLoader<K,V>>                   loaderFactory = config.getCacheLoaderFactory();
+            Factory<CacheWriter<? super K, ? super V>>  writerFactory = config.getCacheWriterFactory();
+            CacheLoader<K,V>                    loader = null;
+            CacheWriter<? super K, ? super V>   writer = null;
+            if (loaderFactory != null) {
+                loader = loaderFactory.create();
+            }
+            if(writerFactory != null) {
+                writer = writerFactory.create();
+            }
+            ScaleoutCacheBackingStore store = new ScaleoutCacheBackingStore(this, loader, writer);
+            try {
+                _cache.setBackingStoreAdapter(store, new BackingStorePolicy(false, config.isReadThrough(), config.isWriteThrough()));
+                _cache.setEventDeliveryExceptionHandler(new EventDeliveryExceptionHandler() {
+                    @Override
+                    public void eventDeliveryException(EventDeliveryExceptionHandlerArgs eventDeliveryExceptionHandlerArgs) {
+                        _logger.severe("Missed event from ScaleOut cache.");
+                    }
+                });
+            } catch (NamedCacheException e) {
+                throw new CacheException("Could not add backing store adapter.");
+            }
+        }
     }
 
     /**
@@ -1112,7 +1158,7 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
                     throw new CacheException("Could not remove listener.", e);
                 }
             }
-            _listeners = null;
+            _listeners.clear();
         }
         _manager.removeNamespace(_config.getCacheName());
     }
@@ -1434,6 +1480,7 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
         @Override
         public void setValue(V v) {
             _value = v;
+            _cache.put(_key, _value);
         }
     }
 
@@ -1483,7 +1530,7 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
     }
 
     /**
-     * Private cache entry event implementation used to translate a NamedCache expiration event into a
+     * Internal cache entry event implementation used to translate a NamedCache expiration event into a
      * {@link CacheEntryEvent}.
      */
     class ScaleoutCacheEntryEvent extends CacheEntryEvent<K, V> {
@@ -1518,6 +1565,126 @@ public class ScaleoutCache<K,V> implements Cache<K, V> {
         @Override
         public <T> T unwrap(Class<T> aClass) {
             return aClass.cast(this);
+        }
+    }
+
+    /**
+     * Internal BackingStore implementation to support ReadThrough and WriteThrough operations.
+     *
+     * If supplied, the backing store implementation uses the {@link CacheLoader} and/or {@link CacheWriter} provider by
+     * the user through a {@link CompleteConfiguration}.
+     */
+    class ScaleoutCacheBackingStore implements BackingStore {
+        private final Cache<K,V>                        _callback;
+        private final CacheLoader<K,V>                  _loader;
+        private final CacheWriter<? super K,? super V>  _writer;
+
+        public ScaleoutCacheBackingStore(Cache<K,V> cache, CacheLoader<K,V> loader, CacheWriter<? super K,? super V> writer) {
+            _callback   = cache;
+            _loader     = loader;
+            _writer     = writer;
+        }
+
+
+        @Override
+        public <T> T load(CachedObjectId<T> id) {
+            if(_loader == null) return null;
+            byte[] serializedKey = new byte[0];
+            try {
+                String sKey = id.getKeyString();
+                serializedKey = Base64.getDecoder().decode(sKey);
+            } catch (Exception e) {
+                throw new CacheException(e);
+            }
+            K key;
+            try {
+                key = deserializeKey(serializedKey);
+            } catch (IOException e) {
+                throw new CacheException("IOException occurred while deserializing key.", e);
+            } catch (ClassNotFoundException e) {
+                throw new CacheException("ClassNotFoundException occurred while deserializing key.", e);
+            } catch (ObjectNotSupportedException e) {
+                throw new CacheException("ObjectNotSupportedException occurred while deserializing key.", e);
+            } catch (Exception e) {
+                throw new CacheException("Exception occurred while deserializing key.", e);
+            }
+            try {
+                V value = _loader.load(key);
+                return (T)value;
+            } catch(Exception e) {
+                throw new CacheException("Unexpected exception while loading value.", e);
+            }
+        }
+
+        @Override
+        public <T> void store(CachedObjectId<T> id, T obj) {
+            if(_writer == null) return;
+            byte[] serializedKey = new byte[0];
+            try {
+                String sKey = id.getKeyString();
+                serializedKey = Base64.getDecoder().decode(sKey);
+            } catch (Exception e) {
+                throw new CacheException(e);
+            }
+            K key;
+            V val;
+            try {
+                key = deserializeKey(serializedKey);
+            } catch (IOException e) {
+                throw new CacheException("IOException occurred while deserializing key.", e);
+            } catch (ClassNotFoundException e) {
+                throw new CacheException("ClassNotFoundException occurred while deserializing key.", e);
+            } catch (ObjectNotSupportedException e) {
+                throw new CacheException("ObjectNotSupportedException occurred while deserializing key.", e);
+            } catch (Exception e) {
+                throw new CacheException("Exception occurred while deserializing key.", e);
+            }
+            try {
+                val = _valueType.cast(obj);
+            } catch (Exception e) {
+                String msg = String.format("Could not cast value to expected type (expected: %s - actual: %s.", _valueType.toString(), obj.getClass().toString());
+                throw new CacheException(msg, e);
+            }
+
+            try {
+                _writer.write(new ScaleoutCacheEntry(key, val, _callback));
+            } catch(Exception e) {
+                throw new CacheException("Unexpected exception thrown from CacheWriter.", e);
+            }
+        }
+
+        @Override
+        public void erase(CachedObjectId id) {
+            if(_writer == null) return;
+            byte[] serializedKey = new byte[0];
+            try {
+                String sKey = id.getKeyString();
+                serializedKey = Base64.getDecoder().decode(sKey);
+            } catch (Exception e) {
+                throw new CacheException(e);
+            }
+            K key;
+            try {
+                key = deserializeKey(serializedKey);
+            } catch (IOException e) {
+                throw new CacheException("IOException occurred while deserializing key.", e);
+            } catch (ClassNotFoundException e) {
+                throw new CacheException("ClassNotFoundException occurred while deserializing key.", e);
+            } catch (ObjectNotSupportedException e) {
+                throw new CacheException("ObjectNotSupportedException occurred while deserializing key.", e);
+            } catch (Exception e) {
+                throw new CacheException("Exception occurred while deserializing key.", e);
+            }
+            try {
+                _writer.delete(key);
+            } catch(Exception e) {
+                throw new CacheException("Unexpected exception thrown from CacheWriter.", e);
+            }
+        }
+
+        @Override
+        public CreatePolicy getCreatePolicy(CachedObjectId cachedObjectId) {
+            return _cache.getDefaultCreatePolicy();
         }
     }
 }
