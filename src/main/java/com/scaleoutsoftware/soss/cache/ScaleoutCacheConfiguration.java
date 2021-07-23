@@ -15,12 +15,10 @@
 */
 package com.scaleoutsoftware.soss.cache;
 
-import javax.cache.configuration.CacheEntryListenerConfiguration;
-import javax.cache.configuration.Configuration;
-import javax.cache.configuration.Factory;
-import javax.cache.configuration.MutableConfiguration;
+import javax.cache.configuration.*;
 import javax.cache.expiry.ExpiryPolicy;
-import java.util.Collection;
+import javax.cache.integration.CacheLoader;
+import javax.cache.integration.CacheWriter;
 import java.util.Collections;
 
 /**
@@ -28,13 +26,17 @@ import java.util.Collections;
  * @param <K> the type of the key in an entry stored in the {@link ScaleoutCache}
  * @param <V> the type of the value in an entry stored in the {@link ScaleoutCache}
  */
-public class ScaleoutCacheConfiguration<K,V> extends MutableConfiguration<K,V> {
+public class ScaleoutCacheConfiguration<K,V> implements CompleteConfiguration<K,V> {
 
-    private final Class<K> _keyType;
-    private final Class<V> _valueType;
-    private final String _cacheName;
-    private Iterable<CacheEntryListenerConfiguration<K,V>>_cacheEntryListenerConfigurations = null;
-    private Factory<ExpiryPolicy> _expiryPolicyFactory = null;
+    private Class<K>                                        _keyType;
+    private Class<V>                                        _valueType;
+    private String                                          _cacheName;
+    private Iterable<CacheEntryListenerConfiguration<K,V>>  _cacheEntryListenerConfigurations   = null;
+    private Factory<ExpiryPolicy>                           _expiryPolicyFactory                = null;
+    private Factory<CacheWriter<? super K,? super V>>       _cacheWriterFactory                 = null;
+    private Factory<CacheLoader<K,V>>                       _cacheLoaderFactory                 = null;
+    private boolean                                         _isReadThrough                      = false;
+    private boolean                                         _isWriteThrough                     = false;
 
     /**
      * Instantiates a new configuration for a {@link ScaleoutCache}.
@@ -43,9 +45,7 @@ public class ScaleoutCacheConfiguration<K,V> extends MutableConfiguration<K,V> {
      * @param valueType the value type for key/value entries
      */
     ScaleoutCacheConfiguration(String cacheName, Class<K> keyType, Class<V> valueType) {
-        _cacheName = cacheName;
-        _keyType = keyType;
-        _valueType = valueType;
+        init(cacheName, keyType, valueType);
     }
 
     /**
@@ -54,7 +54,10 @@ public class ScaleoutCacheConfiguration<K,V> extends MutableConfiguration<K,V> {
      * @param configuration the configuration the ScaleoutCacheConfiguration will use
      */
     ScaleoutCacheConfiguration(String cacheName, Configuration<K,V> configuration) {
-        this(cacheName, configuration.getKeyType(), configuration.getValueType());
+        init(cacheName, configuration.getKeyType(), configuration.getValueType());
+        if(configuration instanceof CompleteConfiguration) {
+            initComplete((CompleteConfiguration<K,V>)configuration);
+        }
     }
 
     /**
@@ -62,15 +65,49 @@ public class ScaleoutCacheConfiguration<K,V> extends MutableConfiguration<K,V> {
      * @param cacheName the ScaleoutCache name
      * @param configuration the configuration the ScaleoutCacheConfiguration will use
      */
-    ScaleoutCacheConfiguration(String cacheName, MutableConfiguration<K,V> configuration) {
-        this(cacheName, configuration.getKeyType(), configuration.getValueType());
-        _cacheEntryListenerConfigurations = configuration.getCacheEntryListenerConfigurations();
-        _expiryPolicyFactory = configuration.getExpiryPolicyFactory();
+    ScaleoutCacheConfiguration(String cacheName, CompleteConfiguration<K,V> configuration) {
+        init(cacheName, configuration.getKeyType(), configuration.getValueType());
+        initComplete(configuration);
+    }
+
+    private void init(String cacheName, Class<K> keyType, Class<V> valueType) {
+        _cacheName  = cacheName;
+        _keyType    = keyType;
+        _valueType  = valueType;
+    }
+
+    private void initComplete(CompleteConfiguration<K,V> configuration) {
+        _cacheEntryListenerConfigurations   = configuration.getCacheEntryListenerConfigurations();
+        _expiryPolicyFactory                = configuration.getExpiryPolicyFactory();
+        _cacheLoaderFactory                 = configuration.getCacheLoaderFactory();
+        _cacheWriterFactory                 = configuration.getCacheWriterFactory();
+        _isReadThrough                      = configuration.isReadThrough();
+        _isWriteThrough                     = configuration.isWriteThrough();
     }
 
     @Override
     public Factory<ExpiryPolicy> getExpiryPolicyFactory() {
         return _expiryPolicyFactory;
+    }
+
+    @Override
+    public boolean isReadThrough() {
+        return _isReadThrough;
+    }
+
+    @Override
+    public boolean isWriteThrough() {
+        return _isWriteThrough;
+    }
+
+    @Override
+    public boolean isStatisticsEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isManagementEnabled() {
+        return false;
     }
 
     @Override
@@ -80,6 +117,16 @@ public class ScaleoutCacheConfiguration<K,V> extends MutableConfiguration<K,V> {
         } else {
             return _cacheEntryListenerConfigurations;
         }
+    }
+
+    @Override
+    public Factory<CacheLoader<K, V>> getCacheLoaderFactory() {
+        return _cacheLoaderFactory;
+    }
+
+    @Override
+    public Factory<CacheWriter<? super K, ? super V>> getCacheWriterFactory() {
+        return _cacheWriterFactory;
     }
 
     /**
@@ -113,4 +160,18 @@ public class ScaleoutCacheConfiguration<K,V> extends MutableConfiguration<K,V> {
         return _cacheName;
     }
 
+    @Override
+    public String toString() {
+        return "ScaleoutCacheConfiguration{" +
+                "_keyType=" + _keyType +
+                ", _valueType=" + _valueType +
+                ", _cacheName='" + _cacheName + '\'' +
+                ", _cacheEntryListenerConfigurations=" + _cacheEntryListenerConfigurations +
+                ", _expiryPolicyFactory=" + _expiryPolicyFactory +
+                ", _cacheWriterFactory=" + _cacheWriterFactory +
+                ", _cacheLoaderFactory=" + _cacheLoaderFactory +
+                ", _isReadThrough=" + _isReadThrough +
+                ", _isWriteThrough=" + _isWriteThrough +
+                '}';
+    }
 }

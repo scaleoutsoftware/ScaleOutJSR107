@@ -29,7 +29,7 @@ artifacts {
 
 dependencies {
     testCompile group: 'junit', name: 'junit', version: '4.11'
-	testCompile group: 'org.junit.jupiter', name: 'junit-jupiter-api', version: '5.3.0-M1'
+	//testCompile group: 'org.junit.jupiter', name: 'junit-jupiter-api', version: '5.3.0-M1'
 	testCompile group: 'javax.cache', name: 'cache-api', version: '1.1.0'
 	testCompile group: 'com.scaleoutsoftware.client', name: 'jnc', version: '5.8.18.349'
 	

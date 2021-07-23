@@ -15,35 +15,31 @@
 */
 package com.scaleoutsoftware.soss.cache;
 
-import com.scaleoutsoftware.soss.cache.ScaleoutCachingProvider;
-import org.junit.After;
 import org.junit.Assert;
-import org.junit.jupiter.api.Assertions;
+import org.junit.Test;
 
 import javax.cache.Cache;
 import javax.cache.CacheManager;
-import javax.cache.configuration.CacheEntryListenerConfiguration;
-import javax.cache.configuration.Factory;
-import javax.cache.configuration.MutableCacheEntryListenerConfiguration;
-import javax.cache.configuration.MutableConfiguration;
+import javax.cache.configuration.*;
 import javax.cache.event.*;
-import javax.cache.expiry.AccessedExpiryPolicy;
 import javax.cache.expiry.CreatedExpiryPolicy;
 import javax.cache.expiry.Duration;
-import javax.cache.expiry.TouchedExpiryPolicy;
+import javax.cache.integration.CacheLoader;
+import javax.cache.integration.CacheLoaderException;
+import javax.cache.integration.CacheWriter;
+import javax.cache.integration.CacheWriterException;
 import javax.cache.processor.EntryProcessor;
 import javax.cache.processor.EntryProcessorException;
 import javax.cache.processor.EntryProcessorResult;
 import javax.cache.processor.MutableEntry;
 import javax.cache.spi.CachingProvider;
 
-import java.io.Serializable;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
-import static org.junit.jupiter.api.Assertions.*;
-
-class ScaleoutCacheTest {
+public class ScaleoutCacheTest {
 
     Cache<String, String> _cache;
     String _name = "test namespace";
@@ -56,43 +52,43 @@ class ScaleoutCacheTest {
         _cache = manager.createCache(_name, new MutableConfiguration<String, String>().setTypes(String.class, String.class));
     }
 
-    @org.junit.jupiter.api.Test
-    void testCreateCacheAndGetCache() {
+    @Test
+    public void testCreateCacheAndGetCache() {
         CachingProvider provider = new ScaleoutCachingProvider();
         CacheManager manager = provider.getCacheManager();
 
         Cache<String, String> cache = manager.createCache(_name, new MutableConfiguration<String, String>().setTypes(String.class, String.class));
 
         Cache<String, String> cachetwo = manager.getCache(_name, String.class, String.class);
-        assertEquals(cache,cachetwo);
+        Assert.assertEquals(cache,cachetwo);
     }
 
-    @org.junit.jupiter.api.Test
-    void get() {
+    @Test
+    public void get() {
         _cache.put("k1", "v1");
         String ret = _cache.get("k1");
-        Assertions.assertEquals("v1", ret);
+        Assert.assertEquals("v1", ret);
 
         _cache.remove("k1");
-        Assertions.assertNull(_cache.get("k1"));
+        Assert.assertNull(_cache.get("k1"));
     }
 
-    @org.junit.jupiter.api.Test
-    void getWithLargeKey() {
+    @Test
+    public void getWithLargeKey() {
         String key =    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
                         "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" +
                         "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" +
                         "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD";
         _cache.put(key, "v1");
         String ret = _cache.get(key);
-        Assertions.assertEquals("v1", ret);
+        Assert.assertEquals("v1", ret);
 
         _cache.remove("k1");
-        Assertions.assertNull(_cache.get("k1"));
+        Assert.assertNull(_cache.get("k1"));
     }
 
-    @org.junit.jupiter.api.Test
-    void getWithLargeCustomClassKey() {
+    @Test
+    public void getWithLargeCustomClassKey() {
         CachingProvider provider = new ScaleoutCachingProvider();
         CacheManager manager = provider.getCacheManager();
         Cache<CustomKeyType, String> cache = manager.getCache("customKeyTest", CustomKeyType.class, String.class);
@@ -103,14 +99,14 @@ class ScaleoutCacheTest {
         CustomKeyType key = new CustomKeyType(keyValue);
         cache.put(key, "v1");
         String ret = cache.get(key);
-        Assertions.assertEquals("v1", ret);
+        Assert.assertEquals("v1", ret);
 
         cache.remove(key);
-        Assertions.assertNull(cache.get(key));
+        Assert.assertNull(cache.get(key));
     }
 
-    @org.junit.jupiter.api.Test
-    void testExpiredWithLargeCustomClassKey() {
+    @Test
+    public void testExpiredWithLargeCustomClassKey() {
         long timeout = 1;
         long currentTimeMillis = System.currentTimeMillis() + (1000 * timeout);
         int roundToNearestSecond = (int)((currentTimeMillis + 500) / 1000);
@@ -131,14 +127,14 @@ class ScaleoutCacheTest {
         try {
             Thread.sleep(3000);
         } catch (InterruptedException e) {
-            fail();
+            Assert.fail();
         }
         cache.deregisterCacheEntryListener(configuration);
     }
 
 
-    @org.junit.jupiter.api.Test
-    void getAllremoveAll() {
+    @Test
+    public void getAllremoveAll() {
         _cache.clear();
         _cache.put("k1", "v1");
         _cache.put("k2", "v2");
@@ -149,42 +145,42 @@ class ScaleoutCacheTest {
         keys.add("k3"); // won't be found
 
         Map<String, String> res = _cache.getAll(keys);
-        Assertions.assertEquals(2, res.size());
-        Assertions.assertEquals("v1", res.get("k1"));
-        Assertions.assertEquals("v2", res.get("k2"));
-        Assertions.assertNull(res.get("k3"));
+        Assert.assertEquals(2, res.size());
+        Assert.assertEquals("v1", res.get("k1"));
+        Assert.assertEquals("v2", res.get("k2"));
+        Assert.assertNull(res.get("k3"));
 
         _cache.removeAll(keys);
-        Assertions.assertNull(_cache.get("k1"));
-        Assertions.assertNull(_cache.get("k2"));
+        Assert.assertNull(_cache.get("k1"));
+        Assert.assertNull(_cache.get("k2"));
     }
 
-    @org.junit.jupiter.api.Test
-    void containsKey() {
+    @Test
+    public void containsKey() {
         _cache.put("k1", "v1");
-        Assertions.assertTrue(_cache.containsKey("k1"));
+        Assert.assertTrue(_cache.containsKey("k1"));
 
         _cache.remove("k1");
-        Assertions.assertFalse(_cache.containsKey("k1"));
+        Assert.assertFalse(_cache.containsKey("k1"));
     }
 
-    @org.junit.jupiter.api.Test
-    void getAndPut() {
+    @Test
+    public void getAndPut() {
         String result = _cache.getAndPut("k1", "v1");
-        Assertions.assertNull(result);
+        Assert.assertNull(result);
 
         result = _cache.getAndPut("k1", "v2");
-        Assertions.assertEquals("v1", result);
+        Assert.assertEquals("v1", result);
 
         result = _cache.get("k1");
-        Assertions.assertEquals("v2", result);
+        Assert.assertEquals("v2", result);
 
         _cache.remove("k1");
-        Assertions.assertNull(_cache.get("k1"));
+        Assert.assertNull(_cache.get("k1"));
     }
 
-    @org.junit.jupiter.api.Test
-    void putAll() {
+    @Test
+    public void putAll() {
         Map<String, String> kvMap = new HashMap<>();
         kvMap.put("k1", "v1");
         kvMap.put("k2", "v2");
@@ -192,99 +188,99 @@ class ScaleoutCacheTest {
         _cache.putAll(kvMap);
 
         Map<String, String> res = _cache.getAll(kvMap.keySet());
-        Assertions.assertEquals(2, res.size());
-        Assertions.assertEquals("v1", res.get("k1"));
-        Assertions.assertEquals("v2", res.get("k2"));
+        Assert.assertEquals(2, res.size());
+        Assert.assertEquals("v1", res.get("k1"));
+        Assert.assertEquals("v2", res.get("k2"));
 
         _cache.removeAll(kvMap.keySet());
-        Assertions.assertNull(_cache.get("k1"));
-        Assertions.assertNull(_cache.get("k2"));
+        Assert.assertNull(_cache.get("k1"));
+        Assert.assertNull(_cache.get("k2"));
     }
 
-    @org.junit.jupiter.api.Test
-    void putIfAbsent() {
+    @Test
+    public void putIfAbsent() {
         boolean wasPut = _cache.putIfAbsent("k1", "v1");
-        Assertions.assertTrue(wasPut);
+        Assert.assertTrue(wasPut);
 
         wasPut = _cache.putIfAbsent("k1", "will fail");
-        Assertions.assertFalse(wasPut);
+        Assert.assertFalse(wasPut);
 
         _cache.remove("k1");
-        Assertions.assertNull(_cache.get("k1"));
+        Assert.assertNull(_cache.get("k1"));
     }
 
-    @org.junit.jupiter.api.Test
-    void removeIfValMatches() {
+    @Test
+    public void removeIfValMatches() {
         boolean wasRemoved = _cache.remove("k666", "will fail");
 
         _cache.put("k1", "v1");
 
         wasRemoved = _cache.remove("k1", "v99");
-        Assertions.assertFalse(wasRemoved);
+        Assert.assertFalse(wasRemoved);
 
         wasRemoved = _cache.remove("k1", "v1");
-        Assertions.assertTrue(wasRemoved);
+        Assert.assertTrue(wasRemoved);
     }
 
 
-    @org.junit.jupiter.api.Test
-    void getAndRemove() {
+    @Test
+    public void getAndRemove() {
 
         String ret = _cache.getAndRemove("k43243");
-        Assertions.assertNull(ret);
+        Assert.assertNull(ret);
 
         _cache.put("k1", "v1");
 
         ret = _cache.getAndRemove("k1");
-        Assertions.assertEquals("v1", ret);
-        Assertions.assertNull(_cache.get("k1"));
+        Assert.assertEquals("v1", ret);
+        Assert.assertNull(_cache.get("k1"));
     }
 
-    @org.junit.jupiter.api.Test
-    void replace() {
+    @Test
+    public void replace() {
         boolean wasReplaced = _cache.replace("k392", "will fail");
-        Assertions.assertFalse(wasReplaced);
+        Assert.assertFalse(wasReplaced);
 
         _cache.put("k1", "v1");
         wasReplaced = _cache.replace("k1", "v2");
-        Assertions.assertTrue(wasReplaced);
-        Assertions.assertEquals("v2", _cache.get("k1"));
+        Assert.assertTrue(wasReplaced);
+        Assert.assertEquals("v2", _cache.get("k1"));
 
         _cache.remove("k1");
     }
 
-    @org.junit.jupiter.api.Test
-    void replaceIfValMatches() {
+    @Test
+    public void replaceIfValMatches() {
         boolean wasReplaced = _cache.replace("k994", "v3838", "will fail");
-        Assertions.assertFalse(wasReplaced);
+        Assert.assertFalse(wasReplaced);
 
         _cache.put("k1", "v1");
         wasReplaced = _cache.replace("k1", "bad old value", "will fail");
-        Assertions.assertFalse(wasReplaced);
+        Assert.assertFalse(wasReplaced);
 
         wasReplaced = _cache.replace("k1", "v1", "v2");
-        Assertions.assertTrue(wasReplaced);
-        Assertions.assertEquals("v2", _cache.get("k1"));
+        Assert.assertTrue(wasReplaced);
+        Assert.assertEquals("v2", _cache.get("k1"));
 
         _cache.remove("k1");
     }
 
-    @org.junit.jupiter.api.Test
-    void getAndReplace() {
+    @Test
+    public void getAndReplace() {
         String ret = _cache.getAndReplace("k23890", "will fail");
-        Assertions.assertNull(ret);
-        Assertions.assertNull(_cache.get("k23890"));
+        Assert.assertNull(ret);
+        Assert.assertNull(_cache.get("k23890"));
 
         _cache.put("k1", "v1");
         ret = _cache.getAndReplace("k1", "v2");
-        Assertions.assertEquals("v1", ret);
-        Assertions.assertEquals("v2", _cache.get("k1"));
+        Assert.assertEquals("v1", ret);
+        Assert.assertEquals("v2", _cache.get("k1"));
 
         _cache.remove("k1");
     }
 
-    @org.junit.jupiter.api.Test
-    void clear() {
+    @Test
+    public void clear() {
         _cache.put("k1", "v1");
         _cache.clear();
 
@@ -295,16 +291,16 @@ class ScaleoutCacheTest {
             e.printStackTrace();
         }
 
-        Assertions.assertNull(_cache.get("k1"));
+        Assert.assertNull(_cache.get("k1"));
     }
 
-    @org.junit.jupiter.api.Test
-    void getName() {
-        Assertions.assertEquals(_name, _cache.getName());
+    @Test
+    public void getName() {
+        Assert.assertEquals(_name, _cache.getName());
     }
 
-    @org.junit.jupiter.api.Test
-    void  testExpired() {
+    @Test
+    public void testExpired() {
         long timeout = 1;
         CachingProvider provider = new ScaleoutCachingProvider();
         Properties props = provider.getDefaultProperties();
@@ -329,8 +325,8 @@ class ScaleoutCacheTest {
         cache.deregisterCacheEntryListener(configuration);
     }
 
-    @org.junit.jupiter.api.Test
-    void  testExpiredThroughConfig() {
+    @Test
+    public void testExpiredThroughConfig() {
         long timeout = 1;
         long currentTimeMillis = System.currentTimeMillis() + (1000 * timeout);
         int roundToNearestSecond = (int)((currentTimeMillis + 500) / 1000);
@@ -351,8 +347,8 @@ class ScaleoutCacheTest {
         cache.deregisterCacheEntryListener(configuration);
     }
 
-    @org.junit.jupiter.api.Test
-    void  testCorrectExpiredPolicyThroughConfig() {
+    @Test
+    public void testCorrectExpiredPolicyThroughConfig() {
         long timeout = 1;
         // round to nearest second * 2 because we will touch the object
         long currentTimeMillis = System.currentTimeMillis() + ((1000 * timeout) * 2);
@@ -368,7 +364,7 @@ class ScaleoutCacheTest {
             Thread.sleep(750);
         } catch (InterruptedException e) {
             e.printStackTrace();
-            fail();
+            Assert.fail();
         }
         cache.get("foo");
 
@@ -376,13 +372,13 @@ class ScaleoutCacheTest {
             Thread.sleep(3000);
         } catch (InterruptedException e) {
             e.printStackTrace();
-            fail();
+            Assert.fail();
         }
         cache.deregisterCacheEntryListener(configuration);
     }
 
-    @org.junit.jupiter.api.Test
-    void  testRemoveCacheEntryListenerConfiguration() {
+    @Test
+    public void testRemoveCacheEntryListenerConfiguration() {
         CachingProvider provider = new ScaleoutCachingProvider();
         CacheManager manager = provider.getCacheManager();
         CacheEntryListenerConfiguration<String, String> configuration = getCacheEntryListenerConfiguration(1);
@@ -393,8 +389,8 @@ class ScaleoutCacheTest {
         _cache.deregisterCacheEntryListener(configuration);
     }
 
-    @org.junit.jupiter.api.Test
-    void testClose() {
+    @Test
+    public void testClose() {
         Exception ex = null;
         _cache.close();
         try {
@@ -402,7 +398,7 @@ class ScaleoutCacheTest {
         } catch(Exception e) {
             ex = e;
         }
-        assertTrue(ex instanceof IllegalStateException);
+        Assert.assertTrue(ex instanceof IllegalStateException);
         ex = null;
 
         try {
@@ -410,7 +406,7 @@ class ScaleoutCacheTest {
         } catch(Exception e) {
             ex = e;
         }
-        assertTrue(ex instanceof IllegalStateException);
+        Assert.assertTrue(ex instanceof IllegalStateException);
         ex = null;
 
         try {
@@ -418,7 +414,7 @@ class ScaleoutCacheTest {
         } catch(Exception e) {
             ex = e;
         }
-        assertTrue(ex instanceof IllegalStateException);
+        Assert.assertTrue(ex instanceof IllegalStateException);
         ex = null;
 
         try {
@@ -426,12 +422,12 @@ class ScaleoutCacheTest {
         } catch(Exception e) {
             ex = e;
         }
-        assertTrue(ex instanceof IllegalStateException);
+        Assert.assertTrue(ex instanceof IllegalStateException);
         ex = null;
     }
 
-    @org.junit.jupiter.api.Test
-    void testInvoke() {
+    @Test
+    public void testInvoke() {
         _cache.put("k1", "v1");
         String ret = _cache.invoke("k1", new EntryProcessor<String, String, String>() {
             @Override
@@ -441,10 +437,10 @@ class ScaleoutCacheTest {
         });
 
 
-        assertEquals("foo", ret);
+        Assert.assertEquals("foo", ret);
     }
-    @org.junit.jupiter.api.Test
-    void testInvokeAll() {
+    @Test
+    public void testInvokeAll() {
         Set<String> keys = new HashSet<String>();
         keys.add("k1");
         keys.add("k2");
@@ -455,17 +451,214 @@ class ScaleoutCacheTest {
         Map<String, EntryProcessorResult<String>> ret = _cache.invokeAll(keys, new EntryProcessor<String, String, String>() {
             @Override
             public String process(MutableEntry<String, String> mutableEntry, Object... objects) throws EntryProcessorException {
-                assertNotNull(mutableEntry.getKey());
+                Assert.assertNotNull(mutableEntry.getKey());
                 if(mutableEntry.getKey().compareTo("k3") == 0) {
-                    assertNull(mutableEntry.getValue());
+                    Assert.assertNull(mutableEntry.getValue());
                 }
                 return "foo";
             }
         });
         for(Map.Entry<String, EntryProcessorResult<String>> entry : ret.entrySet()) {
-            assertEquals(0, entry.getValue().get().compareTo("foo"));
+            Assert.assertEquals(0, entry.getValue().get().compareTo("foo"));
         }
     }
+
+    @Test
+    public void testReadThrough() {
+        CachingProvider provider = new ScaleoutCachingProvider();
+        CacheManager manager = provider.getCacheManager();
+        MutableConfiguration<String, String> config = new MutableConfiguration<>();
+        config.setTypes(String.class, String.class);
+        config.setReadThrough(true);
+        config.setCacheLoaderFactory(new Factory<CacheLoader<String, String>>() {
+            @Override
+            public CacheLoader<String, String> create() {
+                return new CacheLoader<String, String>() {
+                    @Override
+                    public String load(String key) throws CacheLoaderException {
+                        File f = new File(key);
+                        Assert.assertTrue(f.exists());
+                        try {
+                            FileInputStream fis = new FileInputStream(f);
+                            byte[] data = new byte[(int) f.length()];
+                            fis.read(data);
+                            fis.close();
+
+                            return new String(data, StandardCharsets.UTF_8);
+                        } catch (FileNotFoundException e) {
+                            Assert.fail();
+                            return null;
+                        } catch (UnsupportedEncodingException e) {
+                            Assert.fail();
+                            return null;
+                        } catch (IOException e) {
+                            Assert.fail();
+                            return null;
+                        }
+                    }
+
+                    @Override
+                    public Map<String, String> loadAll(Iterable<? extends String> keys) throws CacheLoaderException {
+                        return null;
+                    }
+                };
+            }
+        });
+        Cache<String, String> cache = manager.createCache("TestReadThrough", config);
+
+        String expected = "HelloReadThrough.";
+        String actual = cache.get("test_readthrough.txt");
+        Assert.assertEquals(expected, actual);
+
+    }
+
+    @Test
+    public void testWriteThroughWrite() {
+        File f = new File("test_writethrough.txt");
+        f.delete();
+        CachingProvider provider = new ScaleoutCachingProvider();
+        CacheManager manager = provider.getCacheManager();
+        MutableConfiguration<String, String> config = new MutableConfiguration<>();
+        config.setTypes(String.class, String.class);
+        config.setWriteThrough(true);
+        config.setCacheWriterFactory(new Factory<CacheWriter<? super String, ? super String>>() {
+            @Override
+            public CacheWriter<? super String, ? super String> create() {
+                return new CacheWriter<String, String>() {
+                    @Override
+                    public void write(Cache.Entry<? extends String, ? extends String> entry) throws CacheWriterException {
+                        try {
+                            File f = new File(entry.getKey());
+                            f.createNewFile();
+                            FileOutputStream stream = new FileOutputStream(f);
+                            stream.write(entry.getValue().getBytes());
+                            stream.flush();
+                            stream.close();
+                        } catch (FileNotFoundException e) {
+                            Assert.fail();
+                        } catch (IOException e) {
+                            Assert.fail();
+                        }
+                    }
+
+                    @Override
+                    public void writeAll(Collection<Cache.Entry<? extends String, ? extends String>> collection) throws CacheWriterException {
+
+                    }
+
+                    @Override
+                    public void delete(Object o) throws CacheWriterException {
+
+                    }
+
+                    @Override
+                    public void deleteAll(Collection<?> collection) throws CacheWriterException {
+
+                    }
+                };
+            }
+        });
+        Cache<String, String> cache = manager.createCache("TestWriteThrough", config);
+
+        String expected = "HelloWriteThrough.";
+        cache.put("test_writethrough.txt", expected);
+
+        Assert.assertTrue(f.exists());
+        try {
+            FileInputStream fis = new FileInputStream(f);
+            byte[] data = new byte[(int) f.length()];
+            fis.read(data);
+            fis.close();
+
+           Assert.assertEquals(expected, new String(data, StandardCharsets.UTF_8));
+        } catch (FileNotFoundException e) {
+            Assert.fail();
+        } catch (UnsupportedEncodingException e) {
+            Assert.fail();
+        } catch (IOException e) {
+            Assert.fail();
+        }
+    }
+
+    @Test
+    public void testWriteThroughDelete() {
+        File f = new File("test_writethrough_delete.txt");
+        f.delete();
+        CachingProvider provider = new ScaleoutCachingProvider();
+        CacheManager manager = provider.getCacheManager();
+        MutableConfiguration<String, String> config = new MutableConfiguration<>();
+        config.setTypes(String.class, String.class);
+        config.setWriteThrough(true);
+        config.setCacheWriterFactory(new Factory<CacheWriter<? super String, ? super String>>() {
+            @Override
+            public CacheWriter<? super String, ? super String> create() {
+                return new CacheWriter<String, String>() {
+                    @Override
+                    public void write(Cache.Entry<? extends String, ? extends String> entry) throws CacheWriterException {
+                        try {
+                            File f = new File(entry.getKey());
+                            f.createNewFile();
+                            FileOutputStream stream = new FileOutputStream(f);
+                            stream.write(entry.getValue().getBytes());
+                            stream.flush();
+                            stream.close();
+                        } catch (FileNotFoundException e) {
+                            Assert.fail();
+                        } catch (IOException e) {
+                            Assert.fail();
+                        }
+                    }
+
+                    @Override
+                    public void writeAll(Collection<Cache.Entry<? extends String, ? extends String>> collection) throws CacheWriterException {
+
+                    }
+
+                    @Override
+                    public void delete(Object o) throws CacheWriterException {
+                        try {
+                            File f = new File(o.toString());
+                            f.createNewFile();
+                            FileOutputStream stream = new FileOutputStream(f);
+                            stream.write("Delete.".getBytes(StandardCharsets.UTF_8));
+                            stream.flush();
+                            stream.close();
+                        } catch (FileNotFoundException e) {
+                            Assert.fail();
+                        } catch (IOException e) {
+                            Assert.fail();
+                        }
+                    }
+
+                    @Override
+                    public void deleteAll(Collection<?> collection) throws CacheWriterException {
+
+                    }
+                };
+            }
+        });
+        Cache<String, String> cache = manager.createCache("TestWriteThrough", config);
+
+        String expected = "Delete.";
+        cache.put("test_writethrough_delete.txt", expected);
+
+        Assert.assertTrue(f.exists());
+        try {
+            FileInputStream fis = new FileInputStream(f);
+            byte[] data = new byte[(int) f.length()];
+            fis.read(data);
+            fis.close();
+
+            Assert.assertEquals(expected, new String(data, StandardCharsets.UTF_8));
+        } catch (FileNotFoundException e) {
+            Assert.fail();
+        } catch (UnsupportedEncodingException e) {
+            Assert.fail();
+        } catch (IOException e) {
+            Assert.fail();
+        }
+    }
+
 
     private CacheEntryListenerConfiguration<String, String> getCacheEntryListenerConfiguration(final long expected) {
         return new CacheEntryListenerConfiguration<String, String>() {
@@ -481,8 +674,8 @@ class ScaleoutCacheTest {
                                 int roundToNearestSecond = (int)((currentTimeMillis + 500) / 1000);
                                 System.out.println("Actual: " + roundToNearestSecond + " expected: " + expected);
                                 for(CacheEntryEvent<? extends String, ? extends String> kvp : iterable) {
-                                    assertEquals(roundToNearestSecond, expected);
-                                    assertEquals(kvp.getValue(), "bar");
+                                    Assert.assertEquals(roundToNearestSecond, expected);
+                                    Assert.assertEquals(kvp.getValue(), "bar");
                                 }
                             }
                         };
@@ -521,8 +714,8 @@ class ScaleoutCacheTest {
                                 int roundToNearestSecond = (int)((currentTimeMillis + 500) / 1000);
                                 System.out.println("Actual: " + roundToNearestSecond + " expected: " + expected);
                                 for(CacheEntryEvent<? extends CustomKeyType, ? extends String> kvp : iterable) {
-                                    assertEquals(roundToNearestSecond, expected);
-                                    assertEquals(kvp.getValue(), "bar");
+                                    Assert.assertEquals(roundToNearestSecond, expected);
+                                    Assert.assertEquals(kvp.getValue(), "bar");
                                 }
                             }
                         };
