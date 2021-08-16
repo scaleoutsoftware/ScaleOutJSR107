@@ -641,7 +641,7 @@ public class ScaleoutCacheTest {
 
         String expected = "Delete.";
         cache.put("test_writethrough_delete.txt", expected);
-
+        cache.remove("test_writethrough_delete.txt");
         Assert.assertTrue(f.exists());
         try {
             FileInputStream fis = new FileInputStream(f);
